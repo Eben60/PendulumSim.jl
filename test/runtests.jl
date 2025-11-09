@@ -1,5 +1,5 @@
 using PendulumSim
-using Test
+using ReTest
 
 @testset "PendulumSim.jl" begin
     @testset "Basic functionality" begin
