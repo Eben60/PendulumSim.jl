@@ -1,4 +1,4 @@
-module DoublePendulumSim
+module DoublePendulum
 
 using DifferentialEquations, GLMakie, LinearAlgebra, Dates, Colors
 using StaticArrays
@@ -36,9 +36,14 @@ function run_double_pendulum_gui()
     θ₂₀, ω₂₀ = π / 2, 0.0  # Second pendulum at 90 degrees
     u₀ = [θ₁₀, ω₁₀, θ₂₀, ω₂₀]
 
+    # Simulation parameters
+    g_obs = Observable(9.81)
+    damping_obs = Observable(0.0)
+    time_speed_obs = Observable(1.0)
+
     function f!(du, u, p, t)
         θ₁, ω₁, θ₂, ω₂ = u
-        g, m₁, m₂, L₁, L₂ = p
+        g, m₁, m₂, L₁, L₂, damping = p
         Δ = θ₁ - θ₂
         denom₁ = (m₁ + m₂) * L₁ - m₂ * L₁ * cos(Δ)^2
         denom₂ = (L₂ / L₁) * denom₁
@@ -46,11 +51,13 @@ function run_double_pendulum_gui()
         du[2] = (m₂ * L₁ * ω₁^2 * sin(Δ) * cos(Δ) +
                  m₂ * g * sin(θ₂) * cos(Δ) +
                  m₂ * L₂ * ω₂^2 * sin(Δ) -
-                 (m₁ + m₂) * g * sin(θ₁)) / denom₁
+                 (m₁ + m₂) * g * sin(θ₁) -
+                 damping * ω₁) / denom₁
         du[3] = ω₂
         du[4] = (-m₂ * L₂ * ω₂^2 * sin(Δ) * cos(Δ) +
                  (m₁ + m₂) * (g * sin(θ₁) * cos(Δ) -
-                 L₁ * ω₁^2 * sin(Δ) - g * sin(θ₂))) / denom₂
+                 L₁ * ω₁^2 * sin(Δ) - g * sin(θ₂)) -
+                 damping * ω₂) / denom₂
     end
 
     # Energy calculation function
@@ -85,7 +92,14 @@ function run_double_pendulum_gui()
     grid = fig[1, 1] = GridLayout()
 
     # Top: Title section and controls
-    Label(grid[1, 1:2], "Double Pendulum Simulation", halign=:center, fontsize=18, font=:bold)
+    Label(grid[1, 1], "Double Pendulum Simulation", halign=:center, fontsize=18, font=:bold)
+
+    # Status displays
+    fps_obs = Observable(0.0)
+    energy_drift_obs = Observable(0.0)
+    status_label = Label(grid[1, 2], @lift("FPS: $(round($fps_obs, digits=1)) | ΔE: $(round($energy_drift_obs*100, digits=3))%"),
+                        halign=:center, fontsize=12)
+
     projection_dropdown = Menu(grid[1, 3], options=projection_options, width=140, default=projection_options[1])
 
     # Middle: visualization panels (3 columns now)
@@ -179,20 +193,32 @@ function run_double_pendulum_gui()
    slider_L2 = Slider(controls[5, 2:5], range=0.1:0.1:5.0, startvalue=L₂_obs[])
    connect!(L₂_obs, slider_L2.value)
 
+   Label(controls[6, 1], "g:", halign=:left)
+   slider_g = Slider(controls[6, 2:5], range=0.0:0.5:20.0, startvalue=g_obs[])
+   connect!(g_obs, slider_g.value)
+
+   Label(controls[7, 1], "Damping:", halign=:left)
+   slider_damping = Slider(controls[7, 2:5], range=0.0:0.01:0.5, startvalue=damping_obs[])
+   connect!(damping_obs, slider_damping.value)
+
+   Label(controls[8, 1], "Speed:", halign=:left)
+   slider_speed = Slider(controls[8, 2:5], range=0.1:0.1:3.0, startvalue=time_speed_obs[])
+   connect!(time_speed_obs, slider_speed.value)
+
     # Connect projection dropdown to observable
     connect!(projection_choice, projection_dropdown.selection)
 
     is_running = Observable(false)
 
     # Function to create and solve the ODEProblem
-    function solve_pendulum(m₁, m₂, L₁, L₂)
-        p = [g, m₁, m₂, L₁, L₂]
+    function solve_pendulum(m₁, m₂, L₁, L₂, g_val, damp_val)
+        p = [g_val, m₁, m₂, L₁, L₂, damp_val]
         prob = ODEProblem(f!, copy(u₀), (0, 60), p)
         solve(prob, Tsit5(), abstol=1e-9, reltol=1e-9, saveat=0.02)
     end
 
     # Create an observable for the solution - MUST be defined before @lift uses it
-    sol_obs = Observable(solve_pendulum(m₁_obs[], m₂_obs[], L₁_obs[], L₂_obs[]))
+    sol_obs = Observable(solve_pendulum(m₁_obs[], m₂_obs[], L₁_obs[], L₂_obs[], g_obs[], damping_obs[]))
 
     # Now we can create the pendulum line visualization that depends on sol_obs
     pend_line = @lift begin
@@ -220,8 +246,8 @@ function run_double_pendulum_gui()
     scatter!(axPend, @lift([$pend_line[2], $pend_line[3]]), color=:orange, markersize=15)
 
     # React to changes in parameters
-    onany(m₁_obs, m₂_obs, L₁_obs, L₂_obs) do m₁, m₂, L₁, L₂
-        sol_obs[] = solve_pendulum(m₁, m₂, L₁, L₂)
+    onany(m₁_obs, m₂_obs, L₁_obs, L₂_obs, g_obs, damping_obs) do m₁, m₂, L₁, L₂, g_val, damp_val
+        sol_obs[] = solve_pendulum(m₁, m₂, L₁, L₂, g_val, damp_val)
         idx[] = 1  # Reset animation index when parameters change
         empty!(phase3d_trail[])  # Clear 3D trail when parameters change
     end
@@ -235,7 +261,7 @@ function run_double_pendulum_gui()
     on(reset_btn.clicks) do _
         θ₁₀, ω₁₀, θ₂₀, ω₂₀ = π / 3, 0.0, π / 2, 0.0
         u₀ .= [θ₁₀, ω₁₀, θ₂₀, ω₂₀]
-        sol_obs[] = solve_pendulum(m₁_obs[], m₂_obs[], L₁_obs[], L₂_obs[])
+        sol_obs[] = solve_pendulum(m₁_obs[], m₂_obs[], L₁_obs[], L₂_obs[], g_obs[], damping_obs[])
         idx[] = 1
         empty!(trail_pts[])
         empty!(phase3d_trail[])
@@ -244,7 +270,7 @@ function run_double_pendulum_gui()
     on(rand_btn.clicks) do _
         θ₁₀, ω₁₀, θ₂₀, ω₂₀ = (rand() * 2π - π), (rand() * 2π - π), (rand() * 2π - π), (rand() * 2π - π)
         u₀ .= [θ₁₀, ω₁₀, θ₂₀, ω₂₀]
-        sol_obs[] = solve_pendulum(m₁_obs[], m₂_obs[], L₁_obs[], L₂_obs[])
+        sol_obs[] = solve_pendulum(m₁_obs[], m₂_obs[], L₁_obs[], L₂_obs[], g_obs[], damping_obs[])
         idx[] = 1
         empty!(trail_pts[])
         empty!(phase3d_trail[])
@@ -275,7 +301,7 @@ function run_double_pendulum_gui()
             u₀[2] = ω₁_new
 
             # Resolve and reset
-            sol_obs[] = solve_pendulum(m₁_obs[], m₂_obs[], L₁_obs[], L₂_obs[])
+            sol_obs[] = solve_pendulum(m₁_obs[], m₂_obs[], L₁_obs[], L₂_obs[], g_obs[], damping_obs[])
             idx[] = 1
             empty!(trail_pts[])
             empty!(phase_trail[])
@@ -290,6 +316,10 @@ function run_double_pendulum_gui()
     # Track previous energy for trend calculation
     prev_ke = Ref(0.0)
     prev_pe = Ref(0.0)
+    initial_energy = Ref(0.0)
+    last_frame_time = Ref(time())
+    frame_count = Ref(0)
+    fps_update_interval = 0.5  # Update FPS every 0.5 seconds
 
     # Screenshot task (every 10 seconds, keep last 50)
     screenshot_task = @async begin
@@ -338,12 +368,31 @@ function run_double_pendulum_gui()
 
                 # Update energy calculations
                 θ₁, ω₁, θ₂, ω₂ = sol[:, current_idx]
-                KE, PE = calculate_energy(θ₁, ω₁, θ₂, ω₂, m₁_obs[], m₂_obs[], L₁_obs[], L₂_obs[], g)
+                KE, PE = calculate_energy(θ₁, ω₁, θ₂, ω₂, m₁_obs[], m₂_obs[], L₁_obs[], L₂_obs[], g_obs[])
                 total_E = KE + PE
+
+                # Track initial energy (when starting or resetting)
+                if current_idx == 1
+                    initial_energy[] = total_E
+                end
+
+                # Calculate energy drift percentage
+                if initial_energy[] > 0
+                    energy_drift_obs[] = (total_E - initial_energy[]) / initial_energy[]
+                end
 
                 # Calculate trends
                 ke_trend = KE > prev_ke[] + 0.01 ? "↑" : (KE < prev_ke[] - 0.01 ? "↓" : "")
                 pe_trend = PE > prev_pe[] + 0.01 ? "↑" : (PE < prev_pe[] - 0.01 ? "↓" : "")
+
+                # Update FPS
+                frame_count[] += 1
+                current_time = time()
+                if current_time - last_frame_time[] >= fps_update_interval
+                    fps_obs[] = frame_count[] / (current_time - last_frame_time[])
+                    frame_count[] = 0
+                    last_frame_time[] = current_time
+                end
 
                 # Update observables
                 ke_val_obs[] = KE
@@ -413,7 +462,7 @@ function run_double_pendulum_gui()
                     lines!(ax3d, current_3d_trail, color=colors, linewidth=2)
                     scatter!(ax3d, [current_3d_trail[end]], color=:red, markersize=12)
                 end
-                sleep(0.016)
+                sleep(0.016 / time_speed_obs[])  # Adjust sleep based on speed slider
             else
                 sleep(0.05)
             end
@@ -440,4 +489,4 @@ function run_double_pendulum_gui()
         )
     )
 end
-end # module DoublePendulumSim
+end # module DoublePendulum
