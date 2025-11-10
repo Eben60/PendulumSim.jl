@@ -172,13 +172,51 @@ function run_gui()
     is_normalized = Observable(true)  # Start with normalized phase space
 
     # Plot separatrix (curve separating oscillation from rotation)
-    # E = 2mgL corresponds to ω/ω₀ = ±2√(1 + cos(θ)) in normalized coords
-    # or ω = ±√(2g(1 + cos(θ))/L) in physical coords
+    # For a physical pendulum: E = ½Iω² + mgL_cm(1 - cos(θ))
+    # At separatrix: E_crit = 2mgL_cm (energy at θ=π, ω=0)
+    # Therefore: ω² = 2mgL_cm(1 + cos(θ))/I
+    # Need to compute I and L_cm from the mechanism
     θ_sep = range(-π, π, length=200)
-    ω_sep_normalized_upper = [2 * sqrt(max(1 + cos(θ), 0)) for θ in θ_sep]
-    ω_sep_normalized_lower = [-2 * sqrt(max(1 + cos(θ), 0)) for θ in θ_sep]
-    ω_sep_physical_upper = @lift([sqrt(2 * g * max(1 + cos(θ), 0) / $L_obs) for θ in θ_sep])
-    ω_sep_physical_lower = @lift([-sqrt(2 * g * max(1 + cos(θ), 0) / $L_obs) for θ in θ_sep])
+    
+    # Function to compute separatrix given L and m_bob
+    function compute_separatrix(L::Float64, m_bob::Float64)
+        m_rod = ρ_rod * L
+        
+        # Moment of inertia about pivot (parallel axis theorem)
+        # Rod: I_rod = (1/3)m_rod*L² (uniform rod about end)
+        I_rod = (1/3) * m_rod * L^2
+        # Bob: I_bob = m_bob*L² (point mass at distance L)
+        I_bob = m_bob * L^2
+        I_total = I_rod + I_bob
+        
+        # Center of mass distance from pivot
+        L_cm = (m_rod * L/2 + m_bob * L) / (m_rod + m_bob)
+        
+        # Total mass
+        m_total = m_rod + m_bob
+        
+        # Separatrix: ω² = 2*m_total*g*L_cm*(1 + cos(θ))/I_total
+        ω_sep_upper = [sqrt(max(2 * m_total * g * L_cm * (1 + cos(θ)) / I_total, 0)) for θ in θ_sep]
+        ω_sep_lower = [-sqrt(max(2 * m_total * g * L_cm * (1 + cos(θ)) / I_total, 0)) for θ in θ_sep]
+        
+        # Normalized version (divide by ω₀ = √(m_total*g*L_cm/I_total))
+        ω₀ = sqrt(m_total * g * L_cm / I_total)
+        ω_sep_norm_upper = ω_sep_upper ./ ω₀
+        ω_sep_norm_lower = ω_sep_lower ./ ω₀
+        
+        return (ω_sep_upper, ω_sep_lower, ω_sep_norm_upper, ω_sep_norm_lower)
+    end
+    
+    # Compute initial separatrix (use same initial mass as mechanism)
+    L_initial = L_obs[]
+    m_initial = m_bob_initial  # Use the actual initial bob mass
+    sep_initial = compute_separatrix(L_initial, m_initial)
+    
+    # Make observables that update when L or m change
+    ω_sep_physical_upper = Observable(sep_initial[1])
+    ω_sep_physical_lower = Observable(sep_initial[2])
+    ω_sep_normalized_upper = Observable(sep_initial[3])
+    ω_sep_normalized_lower = Observable(sep_initial[4])
 
     # Plot separatrix (will update based on is_normalized and L_obs)
     lines!(axPhase[], θ_sep, @lift($is_normalized ? ω_sep_normalized_upper : $ω_sep_physical_upper),
@@ -678,6 +716,13 @@ function run_gui()
         mw.state = new_state
         mw.result = new_result
         mw.joint = new_joint
+
+        # Update separatrix for new L and m
+        sep_new = compute_separatrix(new_L, new_m)
+        ω_sep_physical_upper[] = sep_new[1]
+        ω_sep_physical_lower[] = sep_new[2]
+        ω_sep_normalized_upper[] = sep_new[3]
+        ω_sep_normalized_lower[] = sep_new[4]
 
         # Restore state
         set_ic!(θ_current, ω_current)
