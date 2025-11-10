@@ -161,7 +161,7 @@ function run_gui()
             xticks=([-π, -π/2, 0, π/2, π], ["-π", "-π/2", "0", "π/2", "π"]),
             yticks=([-3π, -2π, -π, 0, π, 2π, 3π], ["-3π", "-2π", "-π", "0", "π", "2π", "3π"]))
         # Disable default mouse interactions (scaling, panning, etc.)
-        deregister_interaction!(ax, :rectanglezoom)
+        deregister_interacis_oscillating[]tion!(ax, :rectanglezoom)
         ax
     end
     axPhase = Observable(newAxPhase())
@@ -578,17 +578,31 @@ function run_gui()
         θ_max_sho = sqrt(θ0^2 + (ω0 / ω_sho)^2)
         ω_max_sho = sqrt(θ0^2 * ω_sho^2 + ω0^2)
 
-        # Take the larger of actual and SHO for axis limits
-        θ_limit = max(θ_max, θ_max_sho) * 1.1  # 10% margin
-        ω_limit = max(ω_max, ω_max_sho) * 1.1  # 10% margin
+        # Determine y-limits based on whether trajectory is oscillating or rotating
+        if is_oscillating[]
+            # Oscillating: use bounded limits based on energy
+            θ_limit = max(θ_max, θ_max_sho) * 1.1  # 10% margin
+            ω_limit = max(ω_max, ω_max_sho) * 1.1  # 10% margin
+        else
+            # Rotating: θ increases/decreases continuously
+            # Set θ range to cover ~4 complete rotations (8π total range)
+            # Direction determined by sign of ω0
+            if ω0 > 0
+                θ_limit = 4π * 1.1  # Positive rotation
+            else
+                θ_limit = 4π * 1.1  # Negative rotation (magnitude)
+            end
+            # ω stays roughly constant for rotation, use a reasonable range
+            ω_limit = max(abs(ω0), ω_max) * 1.2
+        end
 
-        # Update axes with calculated limits
-        limits!(axTheta, 0, 2 * T_exact_local, -θ_limit, θ_limit)
-        limits!(axOmega, 0, 2 * T_exact_local, -ω_limit, ω_limit)
+        # Update axes with calculated limits (4 periods now)
+        limits!(axTheta, 0, 4 * T_exact_local, -θ_limit, θ_limit)
+        limits!(axOmega, 0, 4 * T_exact_local, -ω_limit, ω_limit)
 
-        # Update x-ticks for new period
-        xtick_values = [0, T_exact_local/2, T_exact_local, 3*T_exact_local/2, 2*T_exact_local]
-        xtick_labels = ["0", "T/2", "T", "3T/2", "2T"]
+        # Update x-ticks for 4 periods
+        xtick_values = [0, T_exact_local, 2*T_exact_local, 3*T_exact_local, 4*T_exact_local]
+        xtick_labels = ["0", "T", "2T", "3T", "4T"]
         axTheta.xticks = (xtick_values, xtick_labels)
         axOmega.xticks = (xtick_values, xtick_labels)
 
@@ -867,9 +881,9 @@ function run_gui()
                     θ_prev[] = newq
                     θ_continuous = θ_unwrapped[] + newq
 
-                    # Only add time series data if we're within first 2 periods
-                    two_periods_duration = 2 * current_period[]
-                    if t_now[] <= two_periods_duration
+                    # Only add time series data if we're within first 4 periods
+                    four_periods_duration = 4 * current_period[]
+                    if t_now[] <= four_periods_duration
                         push!(ts, Float32(t_now[]))
                         push!(thetas, Float32(θ_continuous))  # Use unwrapped angle
                         push!(omegas, Float32(newv))
@@ -953,8 +967,8 @@ function run_gui()
 
                 # Update current position markers with time wrapping
                 # Interpolate from recorded time series to show position on the original trajectory
-                two_periods_duration = 2 * current_period[]
-                t_wrapped = mod(t_now[], two_periods_duration)
+                four_periods_duration = 4 * current_period[]
+                t_wrapped = mod(t_now[], four_periods_duration)
 
                 # Find the marker values by interpolating from the recorded time series
                 if !isempty(ts) && length(ts) > 1
