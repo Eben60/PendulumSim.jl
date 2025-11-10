@@ -161,7 +161,7 @@ function run_gui()
             xticks=([-π, -π/2, 0, π/2, π], ["-π", "-π/2", "0", "π/2", "π"]),
             yticks=([-3π, -2π, -π, 0, π, 2π, 3π], ["-3π", "-2π", "-π", "0", "π", "2π", "3π"]))
         # Disable default mouse interactions (scaling, panning, etc.)
-        deregister_interacis_oscillating[]tion!(ax, :rectanglezoom)
+        deregister_interaction!(ax, :rectanglezoom)
         ax
     end
     axPhase = Observable(newAxPhase())
