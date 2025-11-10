@@ -4,6 +4,75 @@ using DifferentialEquations, GLMakie, LinearAlgebra, Dates, Colors
 using StaticArrays
 using Logging
 
+export calculate_energy, double_pendulum_ode!
+
+"""
+    double_pendulum_ode!(du, u, p, t)
+
+Equations of motion for the double pendulum with damping.
+
+# Arguments
+- `du`: Derivative vector [dθ₁, dω₁, dθ₂, dω₂]
+- `u`: State vector [θ₁, ω₁, θ₂, ω₂]
+- `p`: Parameters [g, m₁, m₂, L₁, L₂, damping]
+- `t`: Time (unused, but required by ODE interface)
+"""
+function double_pendulum_ode!(du, u, p, t)
+    θ₁, ω₁, θ₂, ω₂ = u
+    g, m₁, m₂, L₁, L₂, damping = p
+    Δ = θ₁ - θ₂
+    denom₁ = (m₁ + m₂) * L₁ - m₂ * L₁ * cos(Δ)^2
+    denom₂ = (L₂ / L₁) * denom₁
+    du[1] = ω₁
+    du[2] = (m₂ * L₁ * ω₁^2 * sin(Δ) * cos(Δ) +
+             m₂ * g * sin(θ₂) * cos(Δ) +
+             m₂ * L₂ * ω₂^2 * sin(Δ) -
+             (m₁ + m₂) * g * sin(θ₁) -
+             damping * ω₁) / denom₁
+    du[3] = ω₂
+    du[4] = (-m₂ * L₂ * ω₂^2 * sin(Δ) * cos(Δ) +
+             (m₁ + m₂) * (g * sin(θ₁) * cos(Δ) -
+             L₁ * ω₁^2 * sin(Δ) - g * sin(θ₂)) -
+             damping * ω₂) / denom₂
+end
+
+"""
+    calculate_energy(θ₁, ω₁, θ₂, ω₂, m₁, m₂, L₁, L₂, g)
+
+Calculate the kinetic and potential energy of the double pendulum system.
+
+# Arguments
+- `θ₁, ω₁`: Angle and angular velocity of first pendulum
+- `θ₂, ω₂`: Angle and angular velocity of second pendulum
+- `m₁, m₂`: Masses of the two bobs
+- `L₁, L₂`: Lengths of the two rods
+- `g`: Gravitational acceleration
+
+# Returns
+- `(KE, PE)`: Tuple of kinetic and potential energy
+"""
+function calculate_energy(θ₁, ω₁, θ₂, ω₂, m₁, m₂, L₁, L₂, g)
+    # Positions of the bobs
+    x₁ = L₁ * sin(θ₁)
+    y₁ = -L₁ * cos(θ₁)
+    x₂ = x₁ + L₂ * sin(θ₂)
+    y₂ = y₁ - L₂ * cos(θ₂)
+
+    # Velocities of the bobs
+    vx₁ = L₁ * ω₁ * cos(θ₁)
+    vy₁ = L₁ * ω₁ * sin(θ₁)
+    vx₂ = vx₁ + L₂ * ω₂ * cos(θ₂)
+    vy₂ = vy₁ + L₂ * ω₂ * sin(θ₂)
+
+    # Kinetic energy
+    KE = 0.5 * m₁ * (vx₁^2 + vy₁^2) + 0.5 * m₂ * (vx₂^2 + vy₂^2)
+
+    # Potential energy (using y=0 as reference at top)
+    PE = m₁ * g * y₁ + m₂ * g * y₂
+
+    return KE, PE
+end
+
 """
     run_double_pendulum_gui()
 
@@ -12,7 +81,6 @@ This maintains screenshot tasks, observables, and energy visualization.
 """
 function run_double_pendulum_gui()
     @info "Launching full Double Pendulum GUI..."
-    g = 9.81
     m₁_obs = Observable(1.0)
     m₂_obs = Observable(1.0)
     L₁_obs = Observable(1.0)
@@ -40,48 +108,6 @@ function run_double_pendulum_gui()
     g_obs = Observable(9.81)
     damping_obs = Observable(0.0)
     time_speed_obs = Observable(1.0)
-
-    function f!(du, u, p, t)
-        θ₁, ω₁, θ₂, ω₂ = u
-        g, m₁, m₂, L₁, L₂, damping = p
-        Δ = θ₁ - θ₂
-        denom₁ = (m₁ + m₂) * L₁ - m₂ * L₁ * cos(Δ)^2
-        denom₂ = (L₂ / L₁) * denom₁
-        du[1] = ω₁
-        du[2] = (m₂ * L₁ * ω₁^2 * sin(Δ) * cos(Δ) +
-                 m₂ * g * sin(θ₂) * cos(Δ) +
-                 m₂ * L₂ * ω₂^2 * sin(Δ) -
-                 (m₁ + m₂) * g * sin(θ₁) -
-                 damping * ω₁) / denom₁
-        du[3] = ω₂
-        du[4] = (-m₂ * L₂ * ω₂^2 * sin(Δ) * cos(Δ) +
-                 (m₁ + m₂) * (g * sin(θ₁) * cos(Δ) -
-                 L₁ * ω₁^2 * sin(Δ) - g * sin(θ₂)) -
-                 damping * ω₂) / denom₂
-    end
-
-    # Energy calculation function
-    function calculate_energy(θ₁, ω₁, θ₂, ω₂, m₁, m₂, L₁, L₂, g)
-        # Positions of the bobs
-        x₁ = L₁ * sin(θ₁)
-        y₁ = -L₁ * cos(θ₁)
-        x₂ = x₁ + L₂ * sin(θ₂)
-        y₂ = y₁ - L₂ * cos(θ₂)
-
-        # Velocities of the bobs
-        vx₁ = L₁ * ω₁ * cos(θ₁)
-        vy₁ = L₁ * ω₁ * sin(θ₁)
-        vx₂ = vx₁ + L₂ * ω₂ * cos(θ₂)
-        vy₂ = vy₁ + L₂ * ω₂ * sin(θ₂)
-
-        # Kinetic energy
-        KE = 0.5 * m₁ * (vx₁^2 + vy₁^2) + 0.5 * m₂ * (vx₂^2 + vy₂^2)
-
-        # Potential energy (using y=0 as reference at top)
-        PE = m₁ * g * y₁ + m₂ * g * y₂
-
-        return KE, PE
-    end
 
     # GUI setup
     GLMakie.activate!(; float=true, focus_on_show=true)
@@ -213,7 +239,7 @@ function run_double_pendulum_gui()
     # Function to create and solve the ODEProblem
     function solve_pendulum(m₁, m₂, L₁, L₂, g_val, damp_val)
         p = [g_val, m₁, m₂, L₁, L₂, damp_val]
-        prob = ODEProblem(f!, copy(u₀), (0, 60), p)
+        prob = ODEProblem(double_pendulum_ode!, copy(u₀), (0, 60), p)
         solve(prob, Tsit5(), abstol=1e-9, reltol=1e-9, saveat=0.02)
     end
 
