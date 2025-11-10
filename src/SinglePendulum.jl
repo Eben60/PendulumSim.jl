@@ -10,7 +10,8 @@ using GLMakie.Makie: Mouse
 
 # Global reference to the current screen for GUI management
 const CURRENT_SCREEN = Ref{Union{Nothing, GLMakie.Screen}}(nothing)
-
+const PHASE_MAX_OMEGA = 3π/2  #
+const control_label_fontsize = 16
 # Struct to hold all time series data for atomic observable updates
 struct TimeSeriesState
     ts::Vector{Float32}
@@ -39,12 +40,13 @@ mutable struct GUIControls
     rand_btn::Any
     reset_btn::Any
     clear_phase_btn::Any
-    normalize_toggle::Any
+    # normalize_toggle::Any
 
     # Sliders
-    c_sld::Any
+    damp_sld::Any
     L_sld::Any
     m_sld::Any
+    speed_sld::Any
 
     # Observables
     is_running::Any
@@ -144,25 +146,27 @@ function run_gui()
     # ==========================
     # Visualization (Makie)
     # ==========================
-    GLMakie.activate!(;float=true, focus_on_show=true)
+    GLMakie.activate!(;float=false, focus_on_show=true)
     set_theme!(theme_dark())
 
-    fig = Figure(size=(800, 600), figure_padding=20)
+    fig = Figure(size=(1000, 1000), figure_padding=20)
 
     # Phase space plot (LEFT, 70% width) - 1:1 aspect ratio
     newAxPhase() = begin
         ax = Axis(fig[1, 1],
             title="Phase space (θ, ω)",
             xlabel="θ [rad]",
-            ylabel="ω [rad/s]",
+            ylabel="ω/ω₀",
             aspect=1,  # 1:1 aspect ratio for circular SHO orbits
             xticks=([-π, -π/2, 0, π/2, π], ["-π", "-π/2", "0", "π/2", "π"]),
             yticks=([-3π, -2π, -π, 0, π, 2π, 3π], ["-3π", "-2π", "-π", "0", "π", "2π", "3π"]))
+        # Disable default mouse interactions (scaling, panning, etc.)
+        deregister_interaction!(ax, :rectanglezoom)
         ax
     end
     axPhase = Observable(newAxPhase())
     xlims!(axPhase[], -π, π)  # Exactly -π to π horizontally
-    ylims!(axPhase[], -π, π)  # Start with normalized limits
+    ylims!(axPhase[], -PHASE_MAX_OMEGA, PHASE_MAX_OMEGA)  # Larger limits for rotating orbits
 
     # Observable for normalized coordinates (defined early for use in separatrix)
     is_normalized = Observable(true)  # Start with normalized phase space
@@ -182,24 +186,6 @@ function run_gui()
     lines!(axPhase[], θ_sep, @lift($is_normalized ? ω_sep_normalized_lower : $ω_sep_physical_lower),
            color=(:white, 0.3), linestyle=:dash, linewidth=2)
 
-    # Pendulum visualization (RIGHT, 30% width) - shows full swing
-    axPend = Axis(fig[1, 2],
-        title="Pendulum",
-        aspect=DataAspect())
-    # Pendulum limits scale with rod length (1.3x for margin)
-    pend_lim = 1.3 * L_obs[]
-    xlims!(axPend, -pend_lim, pend_lim)
-    ylims!(axPend, -pend_lim, pend_lim)
-
-    # Update pendulum limits when L changes
-    on(L_obs) do L
-        lim = 1.3 * L
-        xlims!(axPend, -lim, lim)
-        ylims!(axPend, -lim, lim)
-    end
-
-    hidedecorations!(axPend, grid=false, ticks=false)
-
     # Time series plots (left side only, narrower)
     axTheta = Axis(fig[2, 1],
         title="θ(t)",
@@ -216,74 +202,114 @@ function run_gui()
     linkxaxes!(axTheta, axOmega)
 
     # Calculate period for initial condition and set xlim to show 2 periods
-    θ0_initial = deg2rad(120.0)
-    T_sho = 2π * sqrt(L_obs[] / g)  # Small angle approximation
-    T_exact = T_sho * (2 / π) * Elliptic.K(sin(θ0_initial / 2)^2)  # Large angle period
-    two_periods = 2 * T_exact
+    # θ0_initial = deg2rad(120.0)
+    # T_sho = 2π * sqrt(L_obs[] / g)  # Small angle approximation
+    # T_exact = T_sho * (2 / π) * Elliptic.K(sin(θ0_initial / 2)^2)  # Large angle period
+    # two_periods = 2 * T_exact
+    # set_ic!(50.0,0.0)
 
     # Set x-ticks at even divisions of the period (0, T/2, T, 3T/2, 2T)
-    xtick_values = [0, T_exact/2, T_exact, 3*T_exact/2, 2*T_exact]
-    xtick_labels = ["0", "T/2", "T", "3T/2", "2T"]
-    axTheta.xticks = (xtick_values, xtick_labels)
-    axOmega.xticks = (xtick_values, xtick_labels)
+    # xtick_values = [0, T_exact/2, T_exact, 3*T_exact/2, 2*T_exact]
+    # xtick_labels = ["0", "T/2", "T", "3T/2", "2T"]
+    # axTheta.xticks = (xtick_values, xtick_labels)
+    # axOmega.xticks = (xtick_values, xtick_labels)
 
     # Shared x-axis limits (set once, don't update dynamically)
-    xlims!(axTheta, 0, two_periods)
-    xlims!(axOmega, 0, two_periods)
+    # xlims!(axTheta, 0, two_periods)
+    # xlims!(axOmega, 0, two_periods)
+    # ylims!(axTheta, -π-π/8, π+π/8)  # Initial y-limits with margin
 
     # Enable y-axis autoscaling to data range
-    limits!(axTheta, 0, two_periods, nothing, nothing)  # Auto y-limits
-    limits!(axOmega, 0, two_periods, nothing, nothing)  # Auto y-limits
+    # limits!(axTheta, 0, two_periods, nothing, nothing)  # Auto y-limits
+    # limits!(axOmega, 0, two_periods, nothing, nothing)  # Auto y-limits
 
-    # Control panel (bottom right, spanning rows 2-3)
-    controls = GridLayout(fig[2:3, 2], tellwidth=false, tellheight=false)
-    
-    # All buttons in column 1, compact
-    run_btn = Button(controls[1, 1], label="Run", width=60)
-    rand_btn = Button(controls[2, 1], label="Random", width=60)
-    reset_btn = Button(controls[3, 1], label="Reset", width=60)
-    clear_phase_btn = Button(controls[4, 1], label="Clear", width=60)
-    normalize_toggle = Toggle(controls[5, 1], active=true)
-    Label(controls[5, 1], "ω/ω₀", halign=:left, fontsize=10)
-    is_running = Observable(false)  # Start paused
+    # Right column top: Subgrid for pendulum + energy bars
+    pend_energy_grid = GridLayout(fig[1, 2], tellwidth=true, tellheight=false, alignmode = Inside())
 
-    # Sliders in column 2, very compact (label inline)
-    Label(controls[1, 2], "c", halign=:right, fontsize=10)
-    c_sld = Slider(controls[1, 3], range=0:0.001:0.05, startvalue=0.0, width=80)
+    # Pendulum visualization
+    axPend = Axis(pend_energy_grid[1, 1:5],
+        title="Pendulum", aspect=1
+    )
+        # width=Auto(),
+        # height=Auto(),
+        # alignmode=Mixed(left=0, right=0, bottom=0, top=0)
+    # )
+    # Pendulum limits scale with rod length (1.3x for margin)
+    pend_lim = 2.0 * L_obs[]  # Reduced from 2.3x for tighter view
+    xlims!(axPend, -pend_lim * 1.2, pend_lim * 1.2)  # Moderate horizontal margin
+    ylims!(axPend, -pend_lim * 1.2, pend_lim * 1.2)  # Match vertical to horizontal
 
-    Label(controls[2, 2], "L", halign=:right, fontsize=10)
-    L_sld = Slider(controls[2, 3], range=0.2:0.1:2.0, startvalue=1.0, width=80)
+    # Update pendulum limits when L changes
+    on(L_obs) do L
+        lim = 1.3 * L
+        # xlims!(axPend, -lim, lim)
+        # ylims!(axPend, -lim, lim)
+    end
 
-    Label(controls[3, 2], "m", halign=:right, fontsize=10)
-    m_sld = Slider(controls[3, 3], range=0.1:0.1:2.0, startvalue=0.8, width=80)
-
-    # Energy display as proportion bars (rows 5-6)
+    # hidedecorations!(axPend, grid=false, ticks=false)
+    # Energy display as proportion bars (below pendulum)
     ke_proportion = Observable(0.5)  # Fraction of total energy
     pe_proportion = Observable(0.5)
 
-    # KE bar (blue) - use poly! with rectangle that changes width
-    Label(controls[5, 2], "KE", halign=:right, fontsize=12, font=:bold)
-    ax_ke = Axis(controls[5, 3:5], height=20, limits=(0, 1, 0, 1))
+    # KE bar (blue)
+    Label(pend_energy_grid[2, 1], "KE", halign=:left, fontsize=control_label_fontsize, font=:bold, padding=(5, 0, 0, 0))
+    ax_ke = Axis(pend_energy_grid[3, 1:5], height=20, limits=(0,1,0,1))
     hidedecorations!(ax_ke)
     hidespines!(ax_ke)
-
-    # colgap!(controls, 1, Relative(0.15))
-    # Rectangle that grows/shrinks based on ke_proportion
-    ke_rect = @lift(Rect(0, 0, $ke_proportion, 1))
+    ke_rect = @lift(Rect(0, 0, $ke_proportion,1))
     poly!(ax_ke, ke_rect, color=:dodgerblue, strokewidth=1, strokecolor=:white)
 
     # PE bar (green)
-    Label(controls[6, 2], "PE", halign=:right, fontsize=12, font=:bold)
-    ax_pe = Axis(controls[6, 3:5], height=20, limits=(0, 1, 0, 1))
+    Label(pend_energy_grid[4, 1], "PE", halign=:left, fontsize=control_label_fontsize, font=:bold, padding=(5, 0, 0, 0))
+    ax_pe = Axis(pend_energy_grid[5, 1:5], height=20, limits=(0,1,0,1))
     hidedecorations!(ax_pe)
     hidespines!(ax_pe)
-    # Rectangle that grows/shrinks based on pe_proportion
     pe_rect = @lift(Rect(0, 0, $pe_proportion, 1))
     poly!(ax_pe, pe_rect, color=:green, strokewidth=1, strokecolor=:white)
 
-    # Compact spacing within controls
-    rowgap!(controls, 5)
-    colgap!(controls, 5)
+    # Spacing within pendulum+energy grid
+    rowgap!(pend_energy_grid, 2)
+    # rowsize!(pend_energy_grid, 1, Auto(true))  # Pendulum gets remaining space
+    # colsize!(pend_energy_grid, 1, Auto(true))  # Column expands to fill width
+    trim!(pend_energy_grid)
+    # Right column bottom: Control panel
+    controls_grid = GridLayout(fig[2:3, 2], tellwidth=false, tellheight=false)
+    
+    # Buttons
+    button_grid = GridLayout(controls_grid[1, 1:2], tellwidth=false, tellheight=false)
+    run_btn = Button(button_grid[1, 1], label="Run", width=60)
+    rand_btn = Button(button_grid[1,2], label="Random", width=60)
+    reset_btn = Button(button_grid[1,3], label="Reset", width=60)
+    clear_phase_btn = Button(button_grid[1,4], label="Clear", width=60)
+
+    # Normalize toggle with label
+    toggle_layout = GridLayout(controls_grid[2, :], halign=:center, tellwidth=false, tellheight=false)
+    normalize_toggle = Toggle(toggle_layout[1, 1], active=false)
+    Label(toggle_layout[1, 2], "ω/ω₀", halign=:center, fontsize=control_label_fontsize)
+    is_running = Observable(false)  # Start paused
+    row = 2
+    # Sliders with labels (right side of buttons)
+    function make_control(label, ctrl_fn)
+        row += 1
+        Label(controls_grid[row, 1], label, halign=:right, fontsize=control_label_fontsize)
+        ctrl_fn(row)
+    end
+
+    damp_sld = make_control("damping", row -> begin
+        Slider(controls_grid[row,2], range=0:0.01:0.35, startvalue=0.0)
+    end)
+    L_sld = make_control("L", row -> begin
+        Slider(controls_grid[3, 2], range=0.2:0.1:2.0, startvalue=1.0)
+    end)
+    m_sld = make_control("m", row -> begin
+        Slider(controls_grid[4, 2], range=0.1:0.1:2.0, startvalue=0.8)
+    end)
+    speed_sld = make_control("speed", row -> begin
+        Slider(controls_grid[5, 2], range=0.01:0.1:2.0, startvalue=0.5)
+    end)
+    # Spacing within controls
+    rowgap!(controls_grid, 15)
+    colgap!(controls_grid, 5)
 
     # Add spacing between plots and controls
     rowgap!(fig.layout, 10)
@@ -294,12 +320,12 @@ function run_gui()
     rowsize!(fig.layout, 2, Relative(0.15))  # Time series + controls top (15%)
     rowsize!(fig.layout, 3, Relative(0.15))  # Time series + controls bottom (15%)
 
-    # Column sizes - phase plot gets 70%, pendulum gets 30%
-    colsize!(fig.layout, 1, Relative(0.70))  # Phase plot (left)
-    colsize!(fig.layout, 2, Relative(0.30))  # Pendulum (right)
+    # Column sizes - phase plot gets 60%, pendulum gets 40%
+    colsize!(fig.layout, 1, Relative(0.60))  # Phase plot (left)
+    colsize!(fig.layout, 2, Relative(0.40))  # Pendulum (right)
 
     # Display and set window to floating mode at upper left
-    screen = display(GLMakie.Screen(; float=true, focus_on_show=true), fig)
+    screen = display(GLMakie.Screen(), fig)
 
     # Small delay to ensure window is created before positioning
     sleep(0.1)
@@ -311,36 +337,37 @@ function run_gui()
     CURRENT_SCREEN[] = screen
 
     # ==========================
-    # Screenshot task (async, every 1 second, circular buffer of 50)
+    # Screenshot task (DISABLED - was causing input focus stealing)
+    # Use take_screenshot!() to manually capture screenshots
     # ==========================
-    @async begin
-        while isopen(fig.scene)
-            try
-                # Create timestamped filename
-                timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM-SS")
-                screenshot_path = joinpath(screenshot_dir, "pendulum_$timestamp.png")
+    # @async begin
+    #     while isopen(fig.scene)
+    #         try
+    #             # Create timestamped filename
+    #             timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM-SS")
+    #             screenshot_path = joinpath(screenshot_dir, "pendulum_$timestamp.png")
 
-                # Save screenshot
-                save(screenshot_path, fig)
+    #             # Save screenshot
+    #             save(screenshot_path, fig)
 
-                # Clean up old screenshots (keep only last 50)
-                all_screenshots = filter(f -> endswith(f, ".png") && startswith(f, "pendulum_"), readdir(screenshot_dir))
-                if length(all_screenshots) > 50
-                    # Sort by filename (which includes timestamp, so chronological)
-                    sort!(all_screenshots)
-                    # Delete oldest ones
-                    num_to_delete = length(all_screenshots) - 50
-                    for i in 1:num_to_delete
-                        old_file = joinpath(screenshot_dir, all_screenshots[i])
-                        rm(old_file)
-                    end
-                end
-            catch e
-                @warn "Screenshot failed: $e"
-            end
-            sleep(10.0)  # Save every 10 seconds
-        end
-    end
+    #             # Clean up old screenshots (keep only last 50)
+    #             all_screenshots = filter(f -> endswith(f, ".png") && startswith(f, "pendulum_"), readdir(screenshot_dir))
+    #             if length(all_screenshots) > 50
+    #                 # Sort by filename (which includes timestamp, so chronological)
+    #                 sort!(all_screenshots)
+    #                 # Delete oldest ones
+    #                 num_to_delete = length(all_screenshots) - 50
+    #                 for i in 1:num_to_delete
+    #                     old_file = joinpath(screenshot_dir, all_screenshots[i])
+    #                     rm(old_file)
+    #                 end
+    #             end
+    #         catch e
+    #             @warn "Screenshot failed: $e"
+    #         end
+    #         sleep(10.0)  # Save every 10 seconds
+    #     end
+    # end
 
     # ==========================
     # Observables / data buffers
@@ -352,7 +379,7 @@ function run_gui()
     rod_pts = @lift(Point2f[(0, 0), (Float32($L_obs * sin($θ_obs)), Float32(-$L_obs * cos($θ_obs)))])
     bob_pt = @lift(Point2f(Float32($L_obs * sin($θ_obs)), Float32(-$L_obs * cos($θ_obs))))
     lines!(axPend, rod_pts, color=:gray80, linewidth=5)
-    scatter!(axPend, bob_pt, color=:orange, markersize=10)
+    scatter!(axPend, bob_pt, color=:orange, markersize=25)
 
     # Mutable buffers for time series data
     ts = Float32[]
@@ -363,8 +390,11 @@ function run_gui()
     timeseries_state = Observable(TimeSeriesState(Float32[], Float32[], Float32[], Float32[], Float32[]))
 
     # SHO initial conditions
-    θ0_sho = Observable(θ0_initial)
+    θ0_sho = Observable(0.0)
     ω0_sho = Observable(0.0)
+
+    # Flag to track if trajectory is oscillating or rotating
+    is_oscillating = Observable(true)  # true if inside separatrix, false if rotating
 
     # Current position markers on time series (wrap within 2-period window)
     current_t = Observable([0.0f0])
@@ -374,28 +404,36 @@ function run_gui()
     # Plot actual theta solution
     lines!(axTheta, @lift($timeseries_state.ts), @lift($timeseries_state.thetas), color=:cyan, linewidth=3, label="Actual")
 
-    # Plot SHO theta solution (semi-transparent)
-    lines!(axTheta, @lift($timeseries_state.ts), @lift($timeseries_state.thetas_sho), color=(:dodgerblue, 0.3), linewidth=2, label="SHO", linestyle=:dash)
+    # Plot SHO theta solution (semi-transparent) - only visible for oscillating motion
+    sho_theta_line = lines!(axTheta, @lift($timeseries_state.ts), @lift($timeseries_state.thetas_sho),
+                            color=(:dodgerblue, 0.3), linewidth=2, label="SHO", linestyle=:dash,
+                            visible=is_oscillating)
 
-    # Fill between theta plots
-    band!(axTheta, @lift($timeseries_state.ts), @lift($timeseries_state.thetas), @lift($timeseries_state.thetas_sho), color=(:skyblue, 0.15))
+    # Fill between theta plots - only visible for oscillating motion
+    theta_band = band!(axTheta, @lift($timeseries_state.ts), @lift($timeseries_state.thetas),
+                       @lift($timeseries_state.thetas_sho), color=(:skyblue, 0.15),
+                       visible=is_oscillating)
 
     axislegend(axTheta, position=:rt)
 
     # Plot actual omega solution
     lines!(axOmega, @lift($timeseries_state.ts), @lift($timeseries_state.omegas), color=:cyan, linewidth=3, label="Actual")
 
-    # Plot SHO omega solution (semi-transparent)
-    lines!(axOmega, @lift($timeseries_state.ts), @lift($timeseries_state.omegas_sho), color=(:dodgerblue, 0.3), linewidth=2, label="SHO", linestyle=:dash)
+    # Plot SHO omega solution (semi-transparent) - only visible for oscillating motion
+    sho_omega_line = lines!(axOmega, @lift($timeseries_state.ts), @lift($timeseries_state.omegas_sho),
+                            color=(:dodgerblue, 0.3), linewidth=2, label="SHO", linestyle=:dash,
+                            visible=is_oscillating)
 
-    # Fill between omega plots
-    band!(axOmega, @lift($timeseries_state.ts), @lift($timeseries_state.omegas), @lift($timeseries_state.omegas_sho), color=(:skyblue, 0.15))
+    # Fill between omega plots - only visible for oscillating motion
+    omega_band = band!(axOmega, @lift($timeseries_state.ts), @lift($timeseries_state.omegas),
+                       @lift($timeseries_state.omegas_sho), color=(:skyblue, 0.15),
+                       visible=is_oscillating)
 
     axislegend(axOmega, position=:rt)
 
     # Add current position markers (orange scatter points that wrap around)
-    scatter!(axTheta, current_t, current_theta, color=:orange, markersize=5, marker=:circle, strokewidth=2, strokecolor=:black)
-    scatter!(axOmega, current_t, current_omega, color=:orange, markersize=5, marker=:circle, strokewidth=2, strokecolor=:black)
+    # scatter!(axTheta, current_t, current_theta, color=:orange, markersize=5, marker=:circle, strokewidth=2, strokecolor=:black)
+    # scatter!(axOmega, current_t, current_omega, color=:orange, markersize=5, marker=:circle, strokewidth=2, strokecolor=:black)
     # --- Phase traces ---
     palette = [RGB(0.90, 0.30, 0.25), RGB(0.20, 0.70, 0.90), RGB(0.30, 0.85, 0.40),
         RGB(0.55, 0.45, 0.85), RGB(0.95, 0.70, 0.20), RGB(0.40, 0.80, 0.70)]
@@ -433,8 +471,12 @@ function run_gui()
     end
 
     # Observable for current period (updates when IC changes)
-    current_period = Observable(T_exact)
-    
+    current_period = Observable(0.0)
+
+    # Track previous angle and unwrapped angle for continuous time series
+    θ_prev = Ref(0.0)
+    θ_unwrapped = Ref(0.0)
+
     # ==========================
     # IC handling
     # ==========================
@@ -443,6 +485,10 @@ function run_gui()
         set_velocity!(mw.state, mw.joint, ω0)
         θ_obs[] = θ0
         ω_obs[] = ω0
+
+        # Initialize unwrapped angle tracking
+        θ_prev[] = θ0
+        θ_unwrapped[] = 0.0
 
         # Initialize phase space arrow (normalized by ω₀ = √(g/L))
         θ_wrapped_init = mod(θ0 + π, 2π) - π
@@ -472,6 +518,10 @@ function run_gui()
         # Calculate maximum amplitudes from energy conservation
         # Total energy (normalized by mgL): E = (1/2)*(L/g)*ω^2 + (1 - cos(θ))
         E_normalized = 0.5 * (L_obs[] / g) * ω0^2 + (1.0 - cos(θ0))
+
+        # Check if trajectory is oscillating (E < 2) or rotating (E >= 2)
+        # The separatrix energy is E = 2 (the energy at the unstable equilibrium θ=π, ω=0)
+        is_oscillating[] = E_normalized < 2.0
 
         # Maximum angle (when ω=0): E = 1 - cos(θ_max)
         cos_θ_max = 1.0 - E_normalized
@@ -596,12 +646,13 @@ function run_gui()
         # Update axis ylabel and limits without recreating the axis
         if is_normalized[]
             axPhase[].ylabel = "ω/ω₀"
-            ylims!(axPhase[], -π, π)
+            ylims!(axPhase[], -PHASE_MAX_OMEGA, PHASE_MAX_OMEGA)
         else
             axPhase[].ylabel = "ω [rad/s]"
-            ylims!(axPhase[], -10, 10)
+            ylims!(axPhase[], -PHASE_MAX_OMEGA*sqrt(4), PHASE_MAX_OMEGA*sqrt(4))
         end
-        # Clear trajectory data to avoid mixing normalized/unnormalized
+        # Clear all trajectory data to avoid mixing normalized/unnormalized
+        clear_time_plots!(ts, thetas, omegas, timeseries_state, t_now)
         θ_phase_cur[][] = Float32[]
         ω_phase_cur[][] = Float32[]
         traj_idx[] = 0
@@ -678,10 +729,10 @@ function run_gui()
                     # In normalized mode, ω_clicked_display is ω/ω₀
                     ω₀ = sqrt(g / L_obs[])
                     ω_clicked = ω_clicked_display * ω₀  # Convert back to physical
-                    ω_clicked = clamp(ω_clicked, -π * ω₀, π * ω₀)
+                    ω_clicked = clamp(ω_clicked, -12 * ω₀, 12 * ω₀)
                 else
                     # In physical mode, use directly
-                    ω_clicked = clamp(ω_clicked_display, -10, 10)
+                    ω_clicked = clamp(ω_clicked_display, -20, 20)
                 end
 
                 # Set new initial conditions (always in physical units)
@@ -705,10 +756,9 @@ function run_gui()
         @info "RigidBodyDynamics + Makie running" mode="Run/Pause / Random IC"
         @debug "Initial state" is_running=is_running[] ts_length=length(ts) thetas_length=length(thetas)
 
-        # Frame rate control for smooth 120fps with 3x speed
+        # Frame rate control for smooth 120fps with adjustable speed
         target_fps = 120
         frame_time = 1.0 / target_fps
-        steps_per_frame = max(1, round(Int, frame_time * 3.0 / dt))  # 3x real-time speed
 
         update_every = 4  # Update plots every 4 frames for better performance
         k = 0
@@ -717,7 +767,9 @@ function run_gui()
         while isopen(fig.scene)
             if is_running[]
                 # Do multiple physics steps per frame for smooth motion
-                c = c_sld.value[]
+                c = damp_sld.value[]
+                speed_multiplier = speed_sld.value[]
+                steps_per_frame = max(1, round(Int, frame_time * speed_multiplier / dt))
 
                 for step in 1:steps_per_frame
                     q = configuration(mw.state)
@@ -748,6 +800,7 @@ function run_gui()
                     set_velocity!(mw.state, v)
                     t_now[] = t_now[] + dt
 
+                    # Track wrapped angle for phase space (always in [-π, π])
                     newq = q[1]
                     while newq> π || newq < -π
                         if newq > π
@@ -758,11 +811,22 @@ function run_gui()
                     end
                     newv = v[1]
 
+                    # Track unwrapped angle for continuous time series
+                    # Detect wraps and accumulate offset
+                    θ_diff = newq - θ_prev[]
+                    if θ_diff > π
+                        θ_unwrapped[] -= 2π
+                    elseif θ_diff < -π
+                        θ_unwrapped[] += 2π
+                    end
+                    θ_prev[] = newq
+                    θ_continuous = θ_unwrapped[] + newq
+
                     # Only add time series data if we're within first 2 periods
                     two_periods_duration = 2 * current_period[]
                     if t_now[] <= two_periods_duration
                         push!(ts, Float32(t_now[]))
-                        push!(thetas, Float32(newq))
+                        push!(thetas, Float32(θ_continuous))  # Use unwrapped angle
                         push!(omegas, Float32(newv))
                     end
                     θvec = θ_phase_cur[][]
@@ -902,7 +966,7 @@ function run_gui()
 
                         t = ts[i]
                         θ_raw = θ0_sho[] * cos(ω_sho * t) + (ω0_sho[] / ω_sho) * sin(ω_sho * t)
-                        thetas_sho[i] = mod(θ_raw + π, 2π) - π  # Wrap to [-π, π]
+                        thetas_sho[i] = θ_raw  # Keep unwrapped for continuous display
                         omegas_sho[i] = -θ0_sho[] * ω_sho * sin(ω_sho * t) + ω0_sho[] * cos(ω_sho * t)
                     end
 
@@ -917,8 +981,8 @@ function run_gui()
     # Return all GUI controls for programmatic access
     gui = GUIControls(
         fig, screen,
-        run_btn, rand_btn, reset_btn, clear_phase_btn, normalize_toggle,
-        c_sld, L_sld, m_sld,
+        run_btn, rand_btn, reset_btn, clear_phase_btn, #
+        damp_sld, L_sld, m_sld, speed_sld,
         is_running, is_normalized, L_obs, θ_obs, ω_obs, t_now, ke_proportion, pe_proportion,
         set_ic!, rebuild_mechanism!, set_phase_ic!
     )
@@ -1004,11 +1068,11 @@ This allows agents to reload the GUI after code changes without manual intervent
 # Example
 ```julia
 using PendulumSim
-PendulumSim.run_gl2()
+PendulumSim.SinglePendulum.run_gui()
 
 # ... make some code changes ...
 
-PendulumSim.restart_gui!()  # Close old window and open new one
+PendulumSim.SinglePendulum.restart_gui!()  # Close old window and open new one
 ```
 """
 function restart_gui!()
@@ -1026,18 +1090,18 @@ function restart_gui!()
             CURRENT_SCREEN[] = nothing
         end
     end
-    
+
     # Small delay to let window close cleanly
     sleep(0.2)
 
     # Start fresh GUI
     @info "Starting new GUI..."
     gui = try
-        run_gl2()
+        run_gui()
     catch e
-        @warn "Failed to restart GUI with run_gl2(), trying direct call" exception=e
+        @warn "Failed to restart GUI with run_gui(), trying direct call" exception=e
         # If Revise changed the function signature, call it directly from the module
-        Base.invokelatest(run_gl2)
+        Base.invokelatest(run_gui)
     end
 
     return gui
@@ -1052,14 +1116,14 @@ Useful for programmatically inspecting the GUI state.
 # Example
 ```julia
 gui = PendulumSim.CURRENT_GUI[]
-gui.c_sld.value[] = 0.02  # Set damping
+gui.damp_sld.value[] = 0.02  # Set damping
 path = PendulumSim.take_screenshot!()
 # Now inspect the screenshot at path
 ```
 """
 function take_screenshot!()
     if CURRENT_GUI[] === nothing || CURRENT_GUI[].fig === nothing
-        error("No GUI is currently running. Call run_gl2() or restart_gui!() first.")
+        error("No GUI is currently running. Call run_gui() or restart_gui!() first.")
     end
 
     timestamp = Dates.format(now(), "yyyy-mm-dd_HH-MM-SS-sss")
