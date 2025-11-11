@@ -38,12 +38,15 @@ PendulumSim.DoublePendulum.run_double_pendulum_gui()
 ## Features
 
 ### Single Pendulum
-- Interactive 3D visualization with RigidBodyDynamics
-- Real-time phase space plots (θ vs ω)
-- Comparison with Simple Harmonic Oscillator (SHO)
-- Adjustable parameters: damping coefficient, length, mass
-- Energy tracking and period analysis
-- Interactive controls: play/pause, reset, randomize initial conditions
+- Interactive 2D visualization of physical pendulum (rod + bob) using RigidBodyDynamics
+- Real-time phase space plots (θ vs ω or θ vs ω/ω₀)
+- Comparison with Simple Harmonic Oscillator (SHO) for oscillating motion
+- Accurate separatrix showing boundary between oscillation and rotation
+- 4-period time series display with exact elliptic integral period calculation
+- Adjustable parameters: damping coefficient, length, bob mass, rod density
+- Energy tracking (KE/PE proportions) and automatic trajectory classification
+- Interactive controls: play/pause, reset, randomize IC, click to set IC in phase space
+- Normalized velocity toggle for circular phase space orbits in small-angle regime
 
 ### Double Pendulum
 - Real-time animation of chaotic double pendulum dynamics
