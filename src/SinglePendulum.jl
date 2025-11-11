@@ -46,6 +46,7 @@ mutable struct GUIControls
     damp_sld::Any
     L_sld::Any
     m_sld::Any
+    ρ_sld::Any
     speed_sld::Any
 
     # Observables
@@ -92,10 +93,10 @@ function run_gui()
     # Physical model (RigidBodyDynamics)
     # ==========================
     g = 9.81
-    ρ_rod = 0.5  # Linear density of rod (kg/m) - allows exploring simple vs physical pendulum regimes
-
-    # Function to create mechanism with given length and bob mass
-    function create_mechanism(L::Float64, m_bob::Float64)
+    ρ_rod_obs = Observable(0.2)  # Linear density of rod (kg/m) - allows exploring simple vs physical pendulum regimes
+    m_bob = Observable(1.0)  # Bob mass in kg
+    # Function to create mechanism with given length, bob mass, and rod density
+    function create_mechanism(L::Float64, m_bob::Float64, ρ_rod::Float64)
         frame = CartesianFrame3D("link")
 
         # Rod mass scales with length
@@ -137,10 +138,9 @@ function run_gui()
 
     # Initial rod length and bob mass
     L_obs = Observable(1.0)
-    m_bob_initial = 0.8  # Initial bob mass in kg
-
+    @lift @info "Bob:Rod mass ratio: $($m_bob / ($ρ_rod_obs * $L_obs))"
     # Create initial mechanism (wrapped in mutable struct for mutability in closures)
-    mech_init, state_init, result_init, joint_init = create_mechanism(L_obs[], m_bob_initial)
+    mech_init, state_init, result_init, joint_init = create_mechanism(L_obs[], m_bob[], ρ_rod_obs[])
     mw = MechanismWrapper(mech_init, state_init, result_init, joint_init)
 
     # ==========================
@@ -169,7 +169,7 @@ function run_gui()
     ylims!(axPhase[], -PHASE_MAX_OMEGA, PHASE_MAX_OMEGA)  # Larger limits for rotating orbits
 
     # Observable for normalized coordinates (defined early for use in separatrix)
-    is_normalized = Observable(true)  # Start with normalized phase space
+    is_normalized = Observable(false)  # Start with normalized phase space
 
     # Plot separatrix (curve separating oscillation from rotation)
     # For a physical pendulum: E = ½Iω² + mgL_cm(1 - cos(θ))
@@ -178,8 +178,8 @@ function run_gui()
     # Need to compute I and L_cm from the mechanism
     θ_sep = range(-π, π, length=200)
     
-    # Function to compute separatrix given L and m_bob
-    function compute_separatrix(L::Float64, m_bob::Float64)
+    # Function to compute separatrix given L, m_bob, and ρ_rod
+    function compute_separatrix(L::Float64, m_bob::Float64, ρ_rod::Float64)
         m_rod = ρ_rod * L
         
         # Moment of inertia about pivot (parallel axis theorem)
@@ -207,21 +207,19 @@ function run_gui()
         return (ω_sep_upper, ω_sep_lower, ω_sep_norm_upper, ω_sep_norm_lower)
     end
     
-    # Compute initial separatrix (use same initial mass as mechanism)
-    L_initial = L_obs[]
-    m_initial = m_bob_initial  # Use the actual initial bob mass
-    sep_initial = compute_separatrix(L_initial, m_initial)
-    
+    # Compute initial separatrix (use same initial mass and density as mechanism)
+    sep_initial = compute_separatrix(L_obs[], m_bob[], ρ_rod_obs[])
+
     # Make observables that update when L or m change
     ω_sep_physical_upper = Observable(sep_initial[1])
     ω_sep_physical_lower = Observable(sep_initial[2])
     ω_sep_normalized_upper = Observable(sep_initial[3])
     ω_sep_normalized_lower = Observable(sep_initial[4])
 
-    # Plot separatrix (will update based on is_normalized and L_obs)
-    lines!(axPhase[], θ_sep, @lift($is_normalized ? ω_sep_normalized_upper : $ω_sep_physical_upper),
+    # Plot separatrix (store line objects for manual updates)
+    sep_line_upper = lines!(axPhase[], θ_sep, ω_sep_normalized_upper[],
            color=(:white, 0.3), linestyle=:dash, linewidth=2)
-    lines!(axPhase[], θ_sep, @lift($is_normalized ? ω_sep_normalized_lower : $ω_sep_physical_lower),
+    sep_line_lower = lines!(axPhase[], θ_sep, ω_sep_normalized_lower[],
            color=(:white, 0.3), linestyle=:dash, linewidth=2)
 
     # Time series plots (left side only, narrower)
@@ -320,30 +318,34 @@ function run_gui()
     reset_btn = Button(button_grid[1,3], label="Reset", width=60)
     clear_phase_btn = Button(button_grid[1,4], label="Clear", width=60)
 
-    # Normalize toggle with label
+    # Normalize toggle with label (match initial state of is_normalized Observable)
     toggle_layout = GridLayout(controls_grid[2, :], halign=:center, tellwidth=false, tellheight=false)
-    normalize_toggle = Toggle(toggle_layout[1, 1], active=false)
+    normalize_toggle = Toggle(toggle_layout[1, 1], active=is_normalized[])  # Match initial value
     Label(toggle_layout[1, 2], "ω/ω₀", halign=:center, fontsize=control_label_fontsize)
+    
     is_running = Observable(false)  # Start paused
     row = 2
     # Sliders with labels (right side of buttons)
     function make_control(label, ctrl_fn)
         row += 1
         Label(controls_grid[row, 1], label, halign=:right, fontsize=control_label_fontsize)
-        ctrl_fn(row)
+        ctrl_fn(controls_grid[row,2])
     end
 
-    damp_sld = make_control("damping", row -> begin
-        Slider(controls_grid[row,2], range=0:0.01:0.35, startvalue=0.0)
+    damp_sld = make_control("damping", grid_cell -> begin
+        Slider(grid_cell, range=0:0.01:0.35, startvalue=0.0)
     end)
-    L_sld = make_control("L", row -> begin
-        Slider(controls_grid[3, 2], range=0.2:0.1:2.0, startvalue=1.0)
+    L_sld = make_control("L", grid_cell -> begin
+        Slider(grid_cell, range=0.2:0.1:2.0, startvalue=1.0)
     end)
-    m_sld = make_control("m", row -> begin
-        Slider(controls_grid[4, 2], range=0.1:0.1:2.0, startvalue=0.8)
+    m_sld = make_control("m", grid_cell -> begin
+        Slider(grid_cell, range=0.1:0.1:2.0, startvalue=0.8)
     end)
-    speed_sld = make_control("speed", row -> begin
-        Slider(controls_grid[5, 2], range=0.01:0.1:2.0, startvalue=0.5)
+    ρ_sld = make_control("ρ_rod", grid_cell -> begin
+        Slider(grid_cell, range=0.1:0.1:2.0, startvalue=0.5)
+    end)
+    speed_sld = make_control("speed", grid_cell -> begin
+        Slider(grid_cell, range=0.01:0.1:3.0, startvalue=1.0)
     end)
     # Spacing within controls
     rowgap!(controls_grid, 15)
@@ -363,7 +365,7 @@ function run_gui()
     colsize!(fig.layout, 2, Relative(0.40))  # Pendulum (right)
 
     # Display and set window to floating mode at upper left
-    screen = display(GLMakie.Screen(), fig)
+    screen = display(GLMakie.Screen(; float=true, focus_on_show=true), fig)
 
     # Small delay to ensure window is created before positioning
     sleep(0.1)
@@ -548,18 +550,43 @@ function run_gui()
         current_theta[] = [Float32(θ0)]
         current_omega[] = [Float32(ω0)]
 
-        # Calculate period for this IC
-        T_sho_local = 2π * sqrt(L_obs[] / g)
-        T_exact_local = T_sho_local * (2 / π) * Elliptic.K(sin(abs(θ0) / 2)^2)
-        current_period[] = T_exact_local
-
-        # Calculate maximum amplitudes from energy conservation
-        # Total energy (normalized by mgL): E = (1/2)*(L/g)*ω^2 + (1 - cos(θ))
-        E_normalized = 0.5 * (L_obs[] / g) * ω0^2 + (1.0 - cos(θ0))
+        # Calculate physical pendulum parameters
+        m_bob = m_sld.value[]
+        ρ_rod = ρ_rod_obs[]
+        m_rod = ρ_rod * L_obs[]
+        m_total = m_rod + m_bob
+        L_cm = (m_rod * L_obs[]/2 + m_bob * L_obs[]) / m_total
+        I_rod = (1/3) * m_rod * L_obs[]^2
+        I_bob = m_bob * L_obs[]^2
+        I_total = I_rod + I_bob
+        
+        # Physical pendulum frequency
+        ω₀_phys = sqrt(m_total * g * L_cm / I_total)
+        
+        # Calculate energy (normalized by m_total*g*L_cm)
+        # E = (1/2)*I*ω²/(m*g*L_cm) + (1 - cos(θ))
+        E_normalized = 0.5 * I_total * ω0^2 / (m_total * g * L_cm) + (1.0 - cos(θ0))
 
         # Check if trajectory is oscillating (E < 2) or rotating (E >= 2)
         # The separatrix energy is E = 2 (the energy at the unstable equilibrium θ=π, ω=0)
         is_oscillating[] = E_normalized < 2.0
+        
+        # Calculate period for this IC
+        T_sho_local = 2π / ω₀_phys
+        if is_oscillating[]
+            # Oscillating period using elliptic integral
+            # T = (4/π) * T_sho * K(k²) where k = sin(θ_max/2)
+            T_exact_local = T_sho_local * (2 / π) * Elliptic.K(sin(abs(θ0) / 2)^2)
+        else
+            # Rotating period: Exact formula using elliptic integral
+            # For E > 2 (rotation), the period for one complete rotation (2π) is:
+            # T = 4K(2/E) / (ω₀√(2E))
+            # where K is the complete elliptic integral of the first kind
+            k_sq = 2.0 / E_normalized
+            K_val = Elliptic.K(k_sq)
+            T_exact_local = 4.0 * K_val / (ω₀_phys * sqrt(2.0 * E_normalized))
+        end
+        current_period[] = T_exact_local
 
         # Maximum angle (when ω=0): E = 1 - cos(θ_max)
         cos_θ_max = 1.0 - E_normalized
@@ -583,21 +610,37 @@ function run_gui()
             # Oscillating: use bounded limits based on energy
             θ_limit = max(θ_max, θ_max_sho) * 1.1  # 10% margin
             ω_limit = max(ω_max, ω_max_sho) * 1.1  # 10% margin
+            # Symmetric limits for oscillating motion
+            limits!(axTheta, 0, 4 * T_exact_local, -θ_limit, θ_limit)
         else
             # Rotating: θ increases/decreases continuously
-            # Set θ range to cover ~4 complete rotations (8π total range)
-            # Direction determined by sign of ω0
+            # Each period corresponds to one complete rotation (2π)
+            # In 4 periods, we traverse exactly 8π (4 complete rotations)
+            # Need to account for starting position + total displacement
+            total_displacement = 8π  # 4 complete rotations
+            margin = 1.3  # Extra margin for safety
+            
             if ω0 > 0
-                θ_limit = 4π * 1.1  # Positive rotation
+                # Positive rotation: θ increases from θ0
+                θ_min = θ0 - 2π  # Allow for some initial oscillation
+                θ_max = θ0 + total_displacement * margin
             else
-                θ_limit = 4π * 1.1  # Negative rotation (magnitude)
+                # Negative rotation: θ decreases from θ0
+                θ_max = θ0 + 2π  # Allow for some initial oscillation
+                θ_min = θ0 - total_displacement * margin
             end
-            # ω stays roughly constant for rotation, use a reasonable range
-            ω_limit = max(abs(ω0), ω_max) * 1.2
+            
+            limits!(axTheta, 0, 4 * T_exact_local, θ_min, θ_max)
+            
+            # ω varies between ω_min (at top) and ω_max (at bottom)
+            # At θ=π (top): ω_min from energy conservation
+            # E = (1/2)*(L/g)*ω_min² + 2 => ω_min² = 2g(E-2)/L
+            ω_min_sq = 2 * g * (E_normalized - 2.0) / L_obs[]
+            ω_min = ω_min_sq > 0 ? sqrt(ω_min_sq) : 0.0
+            ω_limit = max(ω_max, abs(ω0)) * 1.2
         end
 
-        # Update axes with calculated limits (4 periods now)
-        limits!(axTheta, 0, 4 * T_exact_local, -θ_limit, θ_limit)
+        # Update omega axis limits (same for both oscillating and rotating)
         limits!(axOmega, 0, 4 * T_exact_local, -ω_limit, ω_limit)
 
         # Update x-ticks for 4 periods
@@ -668,17 +711,19 @@ function run_gui()
     end
 
     on(reset_btn.clicks) do _
-        set_ic!(deg2rad(120.0), 0.0)
+        set_ic!(deg2rad(40.0), 0.0)
     end
 
     on(clear_phase_btn.clicks) do _
         # Clear all plot content
         empty!(axPhase[])
 
-        # Re-add separatrix
-        lines!(axPhase[], θ_sep, @lift($is_normalized ? ω_sep_normalized_upper : $ω_sep_physical_upper),
+        # Re-add separatrix (use current normalization state)
+        sep_data = is_normalized[] ? (ω_sep_normalized_upper[], ω_sep_normalized_lower[]) : 
+                                     (ω_sep_physical_upper[], ω_sep_physical_lower[])
+        sep_line_upper = lines!(axPhase[], θ_sep, sep_data[1],
                color=(:white, 0.3), linestyle=:dash, linewidth=2)
-        lines!(axPhase[], θ_sep, @lift($is_normalized ? ω_sep_normalized_lower : $ω_sep_physical_lower),
+        sep_line_lower = lines!(axPhase[], θ_sep, sep_data[2],
                color=(:white, 0.3), linestyle=:dash, linewidth=2)
 
         # Re-add arrow
@@ -693,26 +738,45 @@ function run_gui()
         new_phase_trace!(axPhase, palette, traj_idx, θ_phase_cur, ω_phase_cur)
     end
 
-    on(normalize_toggle.active) do active
+    function handle_normalization_change(active::Bool)
         is_normalized[] = active
-        # Update axis ylabel and limits without recreating the axis
-        if is_normalized[]
-            axPhase[].ylabel = "ω/ω₀"
-            ylims!(axPhase[], -PHASE_MAX_OMEGA, PHASE_MAX_OMEGA)
+        
+        # Update axis ylabel and limits
+        ax = axPhase[]
+        if active
+            ax.ylabel = "ω/ω₀"
+            ylims!(ax, -PHASE_MAX_OMEGA, PHASE_MAX_OMEGA)
+            # Update separatrix to normalized
+            sep_line_upper[2] = ω_sep_normalized_upper[]
+            sep_line_lower[2] = ω_sep_normalized_lower[]
         else
-            axPhase[].ylabel = "ω [rad/s]"
-            ylims!(axPhase[], -PHASE_MAX_OMEGA*sqrt(4), PHASE_MAX_OMEGA*sqrt(4))
+            ax.ylabel = "ω [rad/s]"
+            ylims!(ax, -PHASE_MAX_OMEGA*sqrt(4), PHASE_MAX_OMEGA*sqrt(4))
+            # Update separatrix to physical
+            sep_line_upper[2] = ω_sep_physical_upper[]
+            sep_line_lower[2] = ω_sep_physical_lower[]
         end
+        
         # Clear all trajectory data to avoid mixing normalized/unnormalized
-        clear_time_plots!(ts, thetas, omegas, timeseries_state, t_now)
-        θ_phase_cur[][] = Float32[]
-        ω_phase_cur[][] = Float32[]
-        traj_idx[] = 0
-        new_phase_trace!(axPhase, palette, traj_idx, θ_phase_cur, ω_phase_cur)
+        # Note: Only clear if we have data (skip on initial setup)
+        if !isempty(ts)
+            clear_time_plots!(ts, thetas, omegas, timeseries_state, t_now)
+            clear_phase_btn.clicks[] += 1  # Trigger clear
+            θ_phase_cur[][] = Float32[]
+            ω_phase_cur[][] = Float32[]
+            traj_idx[] = 0
+        end
     end
 
+    # When toggle changes, update is_normalized and axis
+    on(normalize_toggle.active) do active
+        handle_normalization_change(active)
+    end
+    handle_normalization_change(is_normalized[]) # Initial setup
+
+
     # Helper function to rebuild mechanism with new parameters
-    function rebuild_mechanism!(new_L, new_m)
+    function rebuild_mechanism!(new_L, new_m, new_ρ)
         # Get current state
         θ_current = configuration(mw.state)[1]
         ω_current = velocity(mw.state)[1]
@@ -723,7 +787,7 @@ function run_gui()
         run_btn.label[] = "Run"
 
         # Rebuild mechanism
-        new_mech, new_state, new_result, new_joint = create_mechanism(new_L, new_m)
+        new_mech, new_state, new_result, new_joint = create_mechanism(new_L, new_m, new_ρ)
 
         # Update mutable wrapper
         mw.mech = new_mech
@@ -731,8 +795,8 @@ function run_gui()
         mw.result = new_result
         mw.joint = new_joint
 
-        # Update separatrix for new L and m
-        sep_new = compute_separatrix(new_L, new_m)
+        # Update separatrix for new L, m, and ρ
+        sep_new = compute_separatrix(new_L, new_m, new_ρ)
         ω_sep_physical_upper[] = sep_new[1]
         ω_sep_physical_lower[] = sep_new[2]
         ω_sep_normalized_upper[] = sep_new[3]
@@ -750,16 +814,22 @@ function run_gui()
     # L slider callback - rebuild mechanism with new length
     on(L_sld.value) do new_L
         L_obs[] = new_L
-        rebuild_mechanism!(new_L, m_sld.value[])
+        rebuild_mechanism!(new_L, m_sld.value[], ρ_rod_obs[])
     end
 
     # Mass slider callback - rebuild mechanism with new bob mass
     on(m_sld.value) do new_m
-        rebuild_mechanism!(L_obs[], new_m)
+        rebuild_mechanism!(L_obs[], new_m, ρ_rod_obs[])
+    end
+
+    # Rod density slider callback - rebuild mechanism with new rod density
+    on(ρ_sld.value) do new_ρ
+        ρ_rod_obs[] = new_ρ
+        rebuild_mechanism!(L_obs[], m_sld.value[], new_ρ)
     end
 
     new_phase_trace!(axPhase, palette, traj_idx, θ_phase_cur, ω_phase_cur)
-    set_ic!(deg2rad(120.0), 0.0)
+    set_ic!(deg2rad(40.0), 0.0)  # Start at 40 degrees for near-SHO regime
 
     # Spacebar to toggle run/pause
     on(events(fig).keyboardbutton) do event
@@ -1041,7 +1111,7 @@ function run_gui()
     gui = GUIControls(
         fig, screen,
         run_btn, rand_btn, reset_btn, clear_phase_btn, #
-        damp_sld, L_sld, m_sld, speed_sld,
+        damp_sld, L_sld, m_sld, ρ_sld, speed_sld,
         is_running, is_normalized, L_obs, θ_obs, ω_obs, t_now, ke_proportion, pe_proportion,
         set_ic!, rebuild_mechanism!, set_phase_ic!
     )
