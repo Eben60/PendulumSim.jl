@@ -121,34 +121,6 @@ The simulation uses symplectic integration (Tsit5) to preserve energy conservati
 
 ## Development
 
-### AI Agent Integration via MCPRepl
-
-This project includes AI agent integration for development:
-
-**For AI agents**: See [AGENTS.md](AGENTS.md) for detailed guidelines.
-
-### Quick Start for Development
-
-```bash
-cd PendulumSim.jl
-./repl  # MCP server starts automatically
-```
-
-**VS Code**: Open project, start Julia REPL
-**Claude Desktop**: Config in `.mcp.json`
-**Gemini**: Configured in `~/.gemini/settings.json`
-
-## Security
-
-**Mode**: `lax` | **Port**: `3076` | **Auth**: None (localhost only)
-
-To change security mode:
-
-```julia
-using MCPRepl
-MCPRepl.setup()
-```
-
 
 ## Troubleshooting
 
@@ -163,13 +135,6 @@ MCPRepl.setup()
 - Lower the time speed multiplier
 - Close other GPU-intensive applications
 
-### Development/MCP Issues
-
-**Port in use?** Override with: `JULIA_MCP_PORT=3001 julia --project=.`
-
-**Auth fails?** Check API key: `cat .env`
-
-**Server won't start?** Restart Julia or check port: `lsof -i :3076`
 
 ## Screenshots
 
@@ -194,4 +159,4 @@ MIT License - See LICENSE file for details.
 
 ## Author
 
-Kahli Burke <kahli@kahliburke.com>
+Kahli Burke <kahli@kahliburke.com>, Eben60

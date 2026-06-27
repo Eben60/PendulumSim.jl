@@ -6,17 +6,11 @@
 /docs/build/
 /docs/site/
 
-# MCPRepl - security config contains API keys
-.mcprepl/
-.julia-startup.jl
-
-# Environment variables - contains API keys and ports
-.env
-.claude/
 
 # VS Code - mcp.json contains hardcoded API keys
-.vscode/*
-!.vscode/settings.json
+.vscode/
+
+.gemini/
 
 # MCP client configs - contain hardcoded API keys/ports
 # Note: These template files use env vars but are safe to commit
@@ -36,5 +30,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.log
+tmp/
 
 screenshots

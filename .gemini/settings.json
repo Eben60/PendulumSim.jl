@@ -1,7 +1,0 @@
-{
-  "mcpServers": {
-    "julia-repl": {
-      "httpUrl": "http://localhost:${JULIA_MCP_PORT}"
-    }
-  }
-}
