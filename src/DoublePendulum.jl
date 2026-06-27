@@ -383,7 +383,7 @@ function run_double_pendulum_gui()
     end
 
     # Integration and animation loop
-    @async begin
+    sim_task = @async begin
         sleep(0.5)  # Give the window time to open
         while true  # Run indefinitely - user can close window to stop
             if is_running[]
@@ -495,7 +495,8 @@ function run_double_pendulum_gui()
         end
     end
 
-    display(fig)
+    screen = GLMakie.Screen()
+    display(screen, fig)
     return (
         fig = fig,
         ax3d = ax3d,
@@ -512,6 +513,10 @@ function run_double_pendulum_gui()
         state = (
             is_running = is_running,
             u₀ = u₀
+        ),
+        tasks = (
+            screenshot = screenshot_task,
+            sim = sim_task
         )
     )
 end

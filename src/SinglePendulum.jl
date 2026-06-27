@@ -63,6 +63,7 @@ mutable struct GUIControls
     set_ic!::Any
     rebuild_mechanism!::Any
     set_phase_ic!::Any
+    tasks::Any
 end
 
 # Global reference to GUI controls for programmatic access (defined after GUIControls struct)
@@ -1113,7 +1114,7 @@ function run_gui()
         run_btn, rand_btn, reset_btn, clear_phase_btn, #
         damp_sld, L_sld, m_sld, ρ_sld, speed_sld,
         is_running, is_normalized, L_obs, θ_obs, ω_obs, t_now, ke_proportion, pe_proportion,
-        set_ic!, rebuild_mechanism!, set_phase_ic!
+        set_ic!, rebuild_mechanism!, set_phase_ic!, (sim = sim_task,)
     )
     CURRENT_GUI[] = gui
     return gui
